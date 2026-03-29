@@ -1,16 +1,15 @@
 #include "listenSocket.hpp"
+
 #include <iostream>
 
-using namespace std;
+int main() {
+    std::cout << "Starting" << std::endl;
 
-int main(){
-    cout << "Starting"<<endl;
+    constexpr int kPort = 8080;
+    constexpr int kBacklog = 16;
 
-    cout << "Binding Socket"<<endl;
-  HTTP::BindSocket bs = HTTP::BindSocket(AF_INET, SOCK_STREAM,0,80,INADDR_ANY);
+    HTTP::ListenSocket server(AF_INET, SOCK_STREAM, 0, kPort, INADDR_ANY, kBacklog);
 
-    cout << "Listening"<<endl;
-    HTTP::ListenSocket ls = HTTP::ListenSocket(AF_INET, SOCK_STREAM,0,81,INADDR_ANY,10);
-
-    cout <<"Success";
+    std::cout << "Listening on port " << kPort << " with backlog " << server.get_backlog() << std::endl;
+    return 0;
 }
