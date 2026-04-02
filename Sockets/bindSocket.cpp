@@ -6,5 +6,12 @@ HTTP::BindSocket::BindSocket(int domain, int service, int protocol, int port, u_
 }
 
 int HTTP::BindSocket::connect_network(int sock, struct sockaddr_in address) {
+    int opt = 1;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt failed");
+        return -1;
+    }
+
     return bind(sock, (struct sockaddr *)&address, sizeof(address));
 }
