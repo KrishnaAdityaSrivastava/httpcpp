@@ -5,18 +5,22 @@
 #include <iostream>
 #include <queue>
 #include <string>
+#include <mutex>
+#include <atomic>
+
+#include "cacheRequest.hpp"
 
 
 namespace HTTP{
     class Cache{
         private:
-            std::unordered_map<std::string, std::string> cache;
-            //std::queue<HTTP::CacheRequest> cacheQueue;
+            std::unordered_map<std::string, std::atomic<int>> cache;
+            std::mutex map_mtx;
         public:
             Cache();
-            std::string get(std::string key);
-            void put(std::string key,std::string& value);
-            void inc(std::string key,int inc);
+            int get(std::string key);
+            void put(std::string key, int value);
+            void inc(const std::string& key, int val);
     };
 }
 #endif

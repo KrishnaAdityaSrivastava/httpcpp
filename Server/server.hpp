@@ -11,6 +11,11 @@
 
 #include "request.hpp"
 #include "route.hpp"
+#include "response.hpp"
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/sendfile.h>
 
 #include "../Cache/cache.hpp"
 
@@ -40,10 +45,14 @@ namespace HTTP {
 
         std::string make_key(const std::string& method, const std::string& path);
 
-        void get(const std::string& path, std::function<std::string(const Request&)> handler);
-        void post(const std::string& path,std::function<std::string(const Request&)> handler);
+        void get(const std::string& path,std::function<HTTP::Response(const Request&)> handler);
+        void post(const std::string& path,std::function<HTTP::Response(const Request&)> handler);
+
+        void sendFile(int client_socket,std::string path);
 
         bool match_path(const std::string& route_path, const std::string& req_path,std::unordered_map<std::string, std::string>& params);
+
+        //std::string get_mime_type(const std::string& path);
 
         Cache& get_cache();
 

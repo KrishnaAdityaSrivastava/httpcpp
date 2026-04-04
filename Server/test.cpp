@@ -2,30 +2,46 @@
 
 #include "server.hpp"
 #include "request.hpp"
+#include "response.hpp"
+
 #include "../Cache/cache.hpp"
+#include <signal.h>
 
 
 int main(){
-    
+    signal(SIGPIPE, SIG_IGN);
 
     HTTP::Server server(AF_INET,SOCK_STREAM,0,8080,INADDR_ANY,16);
+
     server.get("/", [](const HTTP::Request& req) {
-        return "Home page";
+        HTTP::Response res(200, "<h1>Hello, World!</h1>");
+        res.headers["Content-Type"] = "text/html";
+        res.is_file = true;
+        
+        return res;
     });
 
     server.get("/about", [](const HTTP::Request& req) {
-        return "About page";
+        return HTTP::Response(200, "About page");
+    });
+
+    server.get("/data/:id", [&server](const HTTP::Request& req) {
+        std::string id = req.params.at("id");
+        HTTP::Response res;
+        res.is_file = true;
+        res.file_path = "./public/sample.html";
+        //res.headers["Content-Type"] = "text/html";
+        return res;
     });
 
     server.get("/users/:id", [&server](const HTTP::Request& req) {
         std::string id = req.params.at("id");
-        server.get_cache().put("id",id);
-        return server.get_cache().get("id");
-        //return "User ID: " + cache.get(id);
+        server.get_cache().put("id", std::stoi(id));
+        return HTTP::Response(200, std::to_string(server.get_cache().get("id")));
     });
 
     server.post("/", [](const HTTP::Request& req) {
-        return "Received: " + req.body;
+        return HTTP::Response(201, "Received: " + req.body);
     });
 
     server.launch();
