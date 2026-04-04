@@ -48,7 +48,7 @@ namespace HTTP {
         void get(const std::string& path,std::function<HTTP::Response(const Request&)> handler);
         void post(const std::string& path,std::function<HTTP::Response(const Request&)> handler);
 
-        void sendFile(int client_socket,std::string path);
+        void send_file(int client_socket, const std::string& path);
 
         bool match_path(const std::string& route_path, const std::string& req_path,std::unordered_map<std::string, std::string>& params);
 

@@ -18,25 +18,35 @@ void HTTP::Server::post(const std::string& path,std::function<HTTP::Response(con
     routes.push_back(Route{"POST", path, handler});
 }
 
-void HTTP::Server::sendFile(int client_socket,std::string path){
+void HTTP::Server::send_file(int client_socket, const std::string& path) {
     int fd = open(path.c_str(), O_RDONLY);
+    if (fd == -1) {
+        std::string res = 
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Length: 0\r\n\r\n";
+        write(client_socket, res.c_str(), res.size());
+        return;
+    }
 
     struct stat st;
     fstat(fd, &st);
 
-    // Send headers first
+    std::string mime = get_mime_type(path);
+
     std::string headers =
         "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html\r\n"
+        "Content-Type: " + mime + "\r\n"
         "Content-Length: " + std::to_string(st.st_size) + "\r\n"
         "Connection: close\r\n"
         "\r\n";
 
     write(client_socket, headers.c_str(), headers.size());
 
-    // Then send file (zero-copy)
     off_t offset = 0;
-    sendfile(client_socket, fd, &offset, st.st_size);
+    while (offset < st.st_size) {
+        ssize_t sent = sendfile(client_socket, fd, &offset, st.st_size - offset);
+        if (sent <= 0) break;
+    }
 
     close(fd);
 }
@@ -167,7 +177,7 @@ void HTTP::Server::responder(int client_socket,Request& req){
     }
 
     if(res.is_file){
-        sendFile(client_socket,res.file_path);
+        send_file(client_socket,res.file_path);
         close(client_socket);
         return;
     }
