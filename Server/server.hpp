@@ -29,7 +29,7 @@ class Server {
     Server(int domain, int service, int protocol, int port, u_long interface, int bklg);
 
     ListenSocket* get_socket();
-    void set_handler(std::function<std::string(Request)> operation);
+    //void set_handler(std::function<std::string(Request)> operation);
 
     void get(const std::string& path, std::function<HTTP::Response(const Request&)> handler);
     void post(const std::string& path, std::function<HTTP::Response(const Request&)> handler);

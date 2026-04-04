@@ -1,6 +1,13 @@
 #pragma once
 
 #include <string>
+#include <cctype>
+#include <fcntl.h>
+#include <iostream>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <filesystem>
 
 #include "request.hpp"
 #include "response.hpp"

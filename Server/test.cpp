@@ -16,7 +16,6 @@ int main(){
     server.get("/", [](const HTTP::Request& req) {
         HTTP::Response res(200, "<h1>Hello, World!</h1>");
         res.headers["Content-Type"] = "text/html";
-        res.is_file = true;
         
         return res;
     });
@@ -29,7 +28,10 @@ int main(){
         std::string id = req.params.at("id");
         HTTP::Response res;
         res.is_file = true;
-        res.file_path = "./public/sample.html";
+        res.file_path = id;
+
+        std::cout << "ID: " << id << std::endl;
+        std::cout << "PATH: " << res.file_path << std::endl;
         //res.headers["Content-Type"] = "text/html";
         return res;
     });

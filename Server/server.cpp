@@ -40,9 +40,9 @@ void HTTP::Server::handle_client_connection(int client_socket) {
     cache.inc("reqcnt", 1);
 }
 
-void HTTP::Server::set_handler(std::function<std::string(Request)> operation) {
-    custom_handler = operation;
-}
+// void HTTP::Server::set_handler(std::function<std::string(Request)> operation) {
+//     custom_handler = operation;
+// }
 
 void HTTP::Server::process_request(int client_socket, Request& req) {
     std::cout << std::endl << "Request Served by now : " << cache.get("reqcnt") << std::endl;
