@@ -6,8 +6,9 @@ namespace HTTP {
 
 class Response {
     public:
-        int status;
+        int status = 404;
         std::string body;
+
         std::unordered_map<std::string, std::string> headers;
 
         bool is_file = false;

@@ -20,9 +20,9 @@ int main(){
         return res;
     });
 
-    server.get("/about", [](const HTTP::Request& req) {
-        return HTTP::Response(200, "About page");
-    });
+    // server.get("/about", [](const HTTP::Request& req) {
+    //     return HTTP::Response(200, "About page");
+    // });
 
     server.get("/data/:id", [&server](const HTTP::Request& req) {
         std::string id = req.params.at("id");
@@ -36,15 +36,15 @@ int main(){
         return res;
     });
 
-    server.get("/users/:id", [&server](const HTTP::Request& req) {
-        std::string id = req.params.at("id");
-        server.get_cache().put("id", std::stoi(id));
-        return HTTP::Response(200, std::to_string(server.get_cache().get("id")));
-    });
+    // server.get("/users/:id", [&server](const HTTP::Request& req) {
+    //     std::string id = req.params.at("id");
+    //     server.get_cache().put("id", std::stoi(id));
+    //     return HTTP::Response(200, std::to_string(server.get_cache().get("id")));
+    // });
 
-    server.post("/", [](const HTTP::Request& req) {
-        return HTTP::Response(201, "Received: " + req.body);
-    });
+    // server.post("/", [](const HTTP::Request& req) {
+    //     return HTTP::Response(201, "Received: " + req.body);
+    // });
 
     server.launch();
 }

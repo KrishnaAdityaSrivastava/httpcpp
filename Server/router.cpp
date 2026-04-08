@@ -33,7 +33,7 @@ bool HTTP::Router::match_path(const std::string& route_path, const std::string& 
 
 HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HTTP::Request& req) {
     HTTP::Response res;
-    res.status = 404;
+    //res.status = 404;
 
     for (const auto& route : routes) {
         if (route.method != req.route.method) {
