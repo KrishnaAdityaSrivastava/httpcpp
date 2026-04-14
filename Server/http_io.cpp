@@ -1,10 +1,12 @@
 #include "http_io.hpp"
-#include <filesystem>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace {
 
+    // Returns true if str ends with suffix.
     bool ends_with(const std::string& str, const std::string& suffix) {
         if (str.length() < suffix.length()) {
             return false;
@@ -12,6 +14,7 @@ namespace {
         return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
     }
 
+    // Maps file extension to MIME type for HTTP Content-Type header.
     std::string get_mime_type(const std::string& path) {
         if (ends_with(path, ".html")) return "text/html";
         if (ends_with(path, ".css")) return "text/css";
@@ -23,6 +26,7 @@ namespace {
         return "application/octet-stream";
     }
 
+    // Converts common HTTP status code to status text.
     std::string status_text_from_code(int status) {
         if (status == 200) return "OK";
         if (status == 201) return "Created";
@@ -30,38 +34,10 @@ namespace {
         return "OK";
     }
 
-    std::string url_decode(const std::string& in) {
-        std::string out;
-        for (size_t i = 0; i < in.size(); ++i) {
-            if (in[i] == '%' && i + 2 < in.size()) {
-                std::string hex = in.substr(i + 1, 2);
-                char ch = static_cast<char>(std::stoi(hex, nullptr, 16));
-                out += ch;
-                i += 2;
-            } else if (in[i] == '+') {
-                out += ' ';
-            } else {
-                out += in[i];
-            }
-        }
-        return out;
-    }
-
-    bool is_within_base(const std::filesystem::path& base, const std::filesystem::path& p) {
-        auto b = base.lexically_normal();
-        auto x = p.lexically_normal();
-
-        auto bit = b.begin(), bend = b.end();
-        auto xit = x.begin(), xend = x.end();
-        for (; bit != bend && xit != xend; ++bit, ++xit) {
-            if (*bit != *xit) return false;
-        }
-        return bit == bend; // base fully matched
-    }
-
     constexpr size_t MAX_HEADER_BYTES = 16 * 1024;       // 16 KB
     constexpr size_t MAX_BODY_BYTES   = 1 * 1024 * 1024; // 1 MB
 
+    // Parses a decimal positive integer into size_t safely.
     bool parse_size_t_decimal(std::string_view s, size_t& out) {
         if (s.empty()) return false;
         unsigned long long tmp = 0;
@@ -73,6 +49,7 @@ namespace {
 
 } // namespace
 
+// Reads one HTTP request from the socket and fills Request fields.
 bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
     std::string buffer;
     buffer.reserve(4096);
@@ -231,6 +208,7 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
 //     }
 // }
 
+// Sends a text/body HTTP response using writev for headers+body.
 void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     std::string headers;
     headers.reserve(256);
@@ -293,24 +271,9 @@ void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     }
 }
 
+// Sends a file response by opening path directly and streaming with sendfile.
 void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path) {
-    std::string decoded = url_decode(path);
-    namespace fs = std::filesystem;
-
-    fs::path base = fs::canonical("./public");
-    fs::path requested = fs::weakly_canonical(base / decoded);
-
-    if (!is_within_base(base, requested)) {
-        const std::string forbidden =
-            "HTTP/1.1 404 Forbidden\r\n"
-            "Content-Length: 0\r\n"
-            "Connection: close\r\n"
-            "\r\n";
-
-        write(client_socket, forbidden.c_str(), forbidden.size());
-        return;
-    }
-    const int fd = open(requested.c_str(), O_RDONLY);
+    const int fd = open(path.c_str(), O_RDONLY);
     if (fd == -1) {
         const std::string not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
         write(client_socket, not_found.c_str(), not_found.size());
@@ -322,7 +285,7 @@ void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path
 
     const std::string headers = "HTTP/1.1 200 OK\r\n"
                                 "Content-Type: " +
-                                get_mime_type(requested) + "\r\n"
+                                get_mime_type(path) + "\r\n"
                                                     "Content-Length: " +
                                 std::to_string(st.st_size) + "\r\n"
                                                         "Connection: close\r\n\r\n";
@@ -339,5 +302,3 @@ void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path
 
     close(fd);
 }
-
-

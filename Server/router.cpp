@@ -1,5 +1,6 @@
 #include "router.hpp"
 
+// Matches request paths against route templates and extracts :param values.
 bool HTTP::Router::match_path(const std::string& route_path, const std::string& req_path,
                               std::unordered_map<std::string, std::string>& params) {
     size_t i = 0;
@@ -31,12 +32,16 @@ bool HTTP::Router::match_path(const std::string& route_path, const std::string& 
     return i >= route_path.size() && j >= req_path.size();
 }
 
+// Finds the first matching route and executes its handler.
 HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HTTP::Request& req) {
     HTTP::Response res;
     //res.status = 404;
 
     for (const auto& route : routes) {
         if (route.method != req.route.method) {
+            continue;
+        }
+        if (route.handler == nullptr) {
             continue;
         }
 
