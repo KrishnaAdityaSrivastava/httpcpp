@@ -1,8 +1,10 @@
 #include <stdio.h>
 
+#include <memory>
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "handler.hpp"
 
 #include <signal.h>
 
