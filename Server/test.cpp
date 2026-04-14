@@ -8,6 +8,7 @@
 
 #include <signal.h>
 
+// Handler for "/" route: returns a basic HTML page.
 HTTP::Response home_page(const HTTP::Request&) {
     HTTP::Response res(
         200,
@@ -17,12 +18,14 @@ HTTP::Response home_page(const HTTP::Request&) {
     return res;
 }
 
+// Handler for "/about" route: returns plain text.
 HTTP::Response about_page(const HTTP::Request&) {
     HTTP::Response res(200, "About: plain function handler");
     res.headers["Content-Type"] = "text/plain";
     return res;
 }
 
+// Handler for "/file" route: marks response as file-based.
 HTTP::Response file_page(const HTTP::Request&) {
     HTTP::Response res;
     res.is_file = true;
@@ -30,6 +33,7 @@ HTTP::Response file_page(const HTTP::Request&) {
     return res;
 }
 
+// Entry point: registers routes and starts the HTTP server loop.
 int main(){
     signal(SIGPIPE, SIG_IGN);
 

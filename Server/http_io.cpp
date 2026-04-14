@@ -6,6 +6,7 @@
 
 namespace {
 
+    // Returns true if str ends with suffix.
     bool ends_with(const std::string& str, const std::string& suffix) {
         if (str.length() < suffix.length()) {
             return false;
@@ -13,6 +14,7 @@ namespace {
         return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
     }
 
+    // Maps file extension to MIME type for HTTP Content-Type header.
     std::string get_mime_type(const std::string& path) {
         if (ends_with(path, ".html")) return "text/html";
         if (ends_with(path, ".css")) return "text/css";
@@ -24,6 +26,7 @@ namespace {
         return "application/octet-stream";
     }
 
+    // Converts common HTTP status code to status text.
     std::string status_text_from_code(int status) {
         if (status == 200) return "OK";
         if (status == 201) return "Created";
@@ -34,6 +37,7 @@ namespace {
     constexpr size_t MAX_HEADER_BYTES = 16 * 1024;       // 16 KB
     constexpr size_t MAX_BODY_BYTES   = 1 * 1024 * 1024; // 1 MB
 
+    // Parses a decimal positive integer into size_t safely.
     bool parse_size_t_decimal(std::string_view s, size_t& out) {
         if (s.empty()) return false;
         unsigned long long tmp = 0;
@@ -45,6 +49,7 @@ namespace {
 
 } // namespace
 
+// Reads one HTTP request from the socket and fills Request fields.
 bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
     std::string buffer;
     buffer.reserve(4096);
@@ -203,6 +208,7 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
 //     }
 // }
 
+// Sends a text/body HTTP response using writev for headers+body.
 void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     std::string headers;
     headers.reserve(256);
@@ -265,6 +271,7 @@ void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     }
 }
 
+// Sends a file response by opening path directly and streaming with sendfile.
 void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path) {
     const int fd = open(path.c_str(), O_RDONLY);
     if (fd == -1) {
