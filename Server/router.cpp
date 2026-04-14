@@ -48,7 +48,7 @@ HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HT
         req.params = params;
 
         try {
-            res = route.handler(req);
+            res = route.handler->handle(req);
         } catch (...) {
             res.status = 500;
             res.body = "Internal Server Error";

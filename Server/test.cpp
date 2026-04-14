@@ -1,50 +1,52 @@
 #include <stdio.h>
 
+#include <memory>
 #include "server.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include "handler.hpp"
 
-#include "../Cache/cache.hpp"
 #include <signal.h>
 
+class HomePageHandler : public HTTP::IRequestHandler {
+  public:
+    HTTP::Response handle(const HTTP::Request&) const override {
+        HTTP::Response res(
+            200,
+            "<!doctype html><html><head><title>OOP HTTP</title></head>"
+            "<body><h1>OOP demo server</h1><p>This route uses polymorphism.</p></body></html>");
+        res.headers["Content-Type"] = "text/html";
+        return res;
+    }
+};
+
+class FilePageHandler : public HTTP::IRequestHandler {
+  private:
+    std::string file_path;
+
+  public:
+    explicit FilePageHandler(std::string path) : file_path(std::move(path)) {}
+
+    HTTP::Response handle(const HTTP::Request&) const override {
+        HTTP::Response res;
+        res.is_file = true;
+        res.file_path = file_path;
+        return res;
+    }
+};
 
 int main(){
     signal(SIGPIPE, SIG_IGN);
 
     HTTP::Server server(AF_INET,SOCK_STREAM,0,8080,INADDR_ANY,16);
 
-    server.get("/", [](const HTTP::Request& req) {
-        HTTP::Response res(200, "<h1>Hello, World!</h1>");
-        res.headers["Content-Type"] = "text/html";
-        
+    server.get("/", std::make_shared<HomePageHandler>());
+    server.get("/file", std::make_shared<FilePageHandler>("sample.html"));
+    server.get("/about", std::make_shared<HTTP::LambdaHandler>([](const HTTP::Request&) {
+        HTTP::Response res(200, "About: lambda handler example");
+        res.headers["Content-Type"] = "text/plain";
         return res;
-    });
-
-    // server.get("/about", [](const HTTP::Request& req) {
-    //     return HTTP::Response(200, "About page");
-    // });
-
-    server.get("/data/:id", [&server](const HTTP::Request& req) {
-        std::string id = req.params.at("id");
-        HTTP::Response res;
-        res.is_file = true;
-        res.file_path = id;
-
-        std::cout << "ID: " << id << std::endl;
-        std::cout << "PATH: " << res.file_path << std::endl;
-        //res.headers["Content-Type"] = "text/html";
-        return res;
-    });
-
-    // server.get("/users/:id", [&server](const HTTP::Request& req) {
-    //     std::string id = req.params.at("id");
-    //     server.get_cache().put("id", std::stoi(id));
-    //     return HTTP::Response(200, std::to_string(server.get_cache().get("id")));
-    // });
-
-    // server.post("/", [](const HTTP::Request& req) {
-    //     return HTTP::Response(201, "Received: " + req.body);
-    // });
+    }));
 
     server.launch();
 }
