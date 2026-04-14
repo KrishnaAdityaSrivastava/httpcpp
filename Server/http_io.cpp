@@ -1,6 +1,7 @@
 #include "http_io.hpp"
-#include <filesystem>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace {
@@ -28,35 +29,6 @@ namespace {
         if (status == 201) return "Created";
         if (status == 404) return "Not Found";
         return "OK";
-    }
-
-    std::string url_decode(const std::string& in) {
-        std::string out;
-        for (size_t i = 0; i < in.size(); ++i) {
-            if (in[i] == '%' && i + 2 < in.size()) {
-                std::string hex = in.substr(i + 1, 2);
-                char ch = static_cast<char>(std::stoi(hex, nullptr, 16));
-                out += ch;
-                i += 2;
-            } else if (in[i] == '+') {
-                out += ' ';
-            } else {
-                out += in[i];
-            }
-        }
-        return out;
-    }
-
-    bool is_within_base(const std::filesystem::path& base, const std::filesystem::path& p) {
-        auto b = base.lexically_normal();
-        auto x = p.lexically_normal();
-
-        auto bit = b.begin(), bend = b.end();
-        auto xit = x.begin(), xend = x.end();
-        for (; bit != bend && xit != xend; ++bit, ++xit) {
-            if (*bit != *xit) return false;
-        }
-        return bit == bend; // base fully matched
     }
 
     constexpr size_t MAX_HEADER_BYTES = 16 * 1024;       // 16 KB
@@ -294,23 +266,7 @@ void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
 }
 
 void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path) {
-    std::string decoded = url_decode(path);
-    namespace fs = std::filesystem;
-
-    fs::path base = fs::canonical("./public");
-    fs::path requested = fs::weakly_canonical(base / decoded);
-
-    if (!is_within_base(base, requested)) {
-        const std::string forbidden =
-            "HTTP/1.1 404 Forbidden\r\n"
-            "Content-Length: 0\r\n"
-            "Connection: close\r\n"
-            "\r\n";
-
-        write(client_socket, forbidden.c_str(), forbidden.size());
-        return;
-    }
-    const int fd = open(requested.c_str(), O_RDONLY);
+    const int fd = open(path.c_str(), O_RDONLY);
     if (fd == -1) {
         const std::string not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
         write(client_socket, not_found.c_str(), not_found.size());
@@ -322,7 +278,7 @@ void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path
 
     const std::string headers = "HTTP/1.1 200 OK\r\n"
                                 "Content-Type: " +
-                                get_mime_type(requested) + "\r\n"
+                                get_mime_type(path) + "\r\n"
                                                     "Content-Length: " +
                                 std::to_string(st.st_size) + "\r\n"
                                                         "Connection: close\r\n\r\n";
@@ -339,5 +295,3 @@ void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path
 
     close(fd);
 }
-
-
