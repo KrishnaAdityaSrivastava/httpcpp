@@ -1,7 +1,5 @@
 #include "server.hpp"
 
-#include <iostream>
-#include <thread>
 #include <unistd.h>
 
 #include "http_io.hpp"
@@ -9,18 +7,19 @@
 
 HTTP::Server::Server(int domain, int service, int protocol, int port, u_long interface, int bklg) {
     socket = new ListenSocket(domain, service, protocol, port, interface, bklg);
-    thread_pool.init(4);
+}
+
+HTTP::Server::~Server() {
+    delete socket;
 }
 
 HTTP::ListenSocket* HTTP::Server::get_socket() { return socket; }
 
-void HTTP::Server::get(const std::string& path,
-                       std::function<HTTP::Response(const Request&)> handler) {
+void HTTP::Server::get(const std::string& path, HandlerFn handler) {
     routes.push_back(Route{"GET", path, handler});
 }
 
-void HTTP::Server::post(const std::string& path,
-                        std::function<HTTP::Response(const Request&)> handler) {
+void HTTP::Server::post(const std::string& path, HandlerFn handler) {
     routes.push_back(Route{"POST", path, handler});
 }
 
@@ -33,19 +32,21 @@ int HTTP::Server::accepter() {
 void HTTP::Server::handle_client_connection(int client_socket) {
     struct timeval tv{5, 0};
     setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    HTTP::HttpIO io;
+
     while(true){
         Request req;
-        if (!HTTP::HttpIO::read_request_from_socket(client_socket, req)) {
+        if (!io.read_request_from_socket(client_socket, req)) {
             break;
         }
         HTTP::Response res = HTTP::Router::dispatch(routes, req);
         
         if (res.is_file) {
-            HTTP::HttpIO::send_file_response(client_socket, res.file_path);
+            io.send_file_response(client_socket, res.file_path);
             close(client_socket);
             return;
         }
-        else HTTP::HttpIO::send_response(client_socket, res);
+        else io.send_response(client_socket, res);
 
         auto it = req.headers.find("Connection");
         if (it != req.headers.end() && it->second == "close") {
@@ -53,44 +54,16 @@ void HTTP::Server::handle_client_connection(int client_socket) {
         }
     }
     close(client_socket);
-    
-    //cache.inc("reqcnt", 1);
 }
-
-// void HTTP::Server::set_handler(std::function<std::string(Request)> operation) {
-//     custom_handler = operation;
-// }
-
-// void HTTP::Server::process_request(int client_socket, Request& req) {
-//     //std::cout << std::endl << "Request Served by now : " << cache.get("reqcnt") << std::endl;
-
-
-
-//     HTTP::HttpIO::send_response(client_socket, res);
-//     close(client_socket);
-// }
 
 void HTTP::Server::launch() {
     while (true) {
-        //std::cout << std::endl << "WAITING" << std::endl;
-
         int client_socket = accepter();
-        
+
         if (client_socket < 0) {
-            close(client_socket);
-            return;
+            continue;
         }
 
-        thread_pool.enqueue([this, client_socket]() {
-            handle_client_connection(client_socket);
-        });
-
-        //std::cout << std::endl << "DONE" << std::endl;
+        handle_client_connection(client_socket);
     }
-}
-
-HTTP::Cache& HTTP::Server::get_cache() { return cache; }
-
-std::string HTTP::Server::make_key(const std::string& method, const std::string& path) {
-    return method + ":" + path;
 }

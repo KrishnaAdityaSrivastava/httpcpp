@@ -39,6 +39,9 @@ HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HT
         if (route.method != req.route.method) {
             continue;
         }
+        if (route.handler == nullptr) {
+            continue;
+        }
 
         std::unordered_map<std::string, std::string> params;
         if (!match_path(route.path, req.route.path, params)) {
