@@ -8,45 +8,36 @@
 
 #include <signal.h>
 
-class HomePageHandler : public HTTP::IRequestHandler {
-  public:
-    HTTP::Response handle(const HTTP::Request&) const override {
-        HTTP::Response res(
-            200,
-            "<!doctype html><html><head><title>OOP HTTP</title></head>"
-            "<body><h1>OOP demo server</h1><p>This route uses polymorphism.</p></body></html>");
-        res.headers["Content-Type"] = "text/html";
-        return res;
-    }
-};
+HTTP::Response home_page(const HTTP::Request&) {
+    HTTP::Response res(
+        200,
+        "<!doctype html><html><head><title>Basic C-style HTTP</title></head>"
+        "<body><h1>Simple server</h1><p>Only essentials.</p></body></html>");
+    res.headers["Content-Type"] = "text/html";
+    return res;
+}
 
-class FilePageHandler : public HTTP::IRequestHandler {
-  private:
-    std::string file_path;
+HTTP::Response about_page(const HTTP::Request&) {
+    HTTP::Response res(200, "About: plain function handler");
+    res.headers["Content-Type"] = "text/plain";
+    return res;
+}
 
-  public:
-    explicit FilePageHandler(std::string path) : file_path(std::move(path)) {}
-
-    HTTP::Response handle(const HTTP::Request&) const override {
-        HTTP::Response res;
-        res.is_file = true;
-        res.file_path = file_path;
-        return res;
-    }
-};
+HTTP::Response file_page(const HTTP::Request&) {
+    HTTP::Response res;
+    res.is_file = true;
+    res.file_path = "sample.html";
+    return res;
+}
 
 int main(){
     signal(SIGPIPE, SIG_IGN);
 
     HTTP::Server server(AF_INET,SOCK_STREAM,0,8080,INADDR_ANY,16);
 
-    server.get("/", std::make_shared<HomePageHandler>());
-    server.get("/file", std::make_shared<FilePageHandler>("sample.html"));
-    server.get("/about", std::make_shared<HTTP::LambdaHandler>([](const HTTP::Request&) {
-        HTTP::Response res(200, "About: lambda handler example");
-        res.headers["Content-Type"] = "text/plain";
-        return res;
-    }));
+    server.get("/", home_page);
+    server.get("/about", about_page);
+    server.get("/file", file_page);
 
     server.launch();
 }

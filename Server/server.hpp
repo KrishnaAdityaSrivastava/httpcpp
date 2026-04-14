@@ -3,7 +3,6 @@
 
 #include <string>
 #include <vector>
-#include <memory>
 
 #include "request.hpp"
 #include "response.hpp"
@@ -27,8 +26,8 @@ class Server {
     ListenSocket* get_socket();
     void handle_client_connection(int client_socket);
 
-    void get(const std::string& path, std::shared_ptr<IRequestHandler> handler);
-    void post(const std::string& path, std::shared_ptr<IRequestHandler> handler);
+    void get(const std::string& path, HandlerFn handler);
+    void post(const std::string& path, HandlerFn handler);
 
     void launch();
 };

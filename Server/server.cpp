@@ -15,11 +15,11 @@ HTTP::Server::~Server() {
 
 HTTP::ListenSocket* HTTP::Server::get_socket() { return socket; }
 
-void HTTP::Server::get(const std::string& path, std::shared_ptr<IRequestHandler> handler) {
+void HTTP::Server::get(const std::string& path, HandlerFn handler) {
     routes.push_back(Route{"GET", path, handler});
 }
 
-void HTTP::Server::post(const std::string& path, std::shared_ptr<IRequestHandler> handler) {
+void HTTP::Server::post(const std::string& path, HandlerFn handler) {
     routes.push_back(Route{"POST", path, handler});
 }
 
