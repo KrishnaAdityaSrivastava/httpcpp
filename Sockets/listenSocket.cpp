@@ -1,8 +1,7 @@
 #include "listenSocket.hpp"
 
 #include <arpa/inet.h>
-#include <cstdio>
-#include <cstdlib>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -14,24 +13,20 @@ HTTP::ListenSocket::ListenSocket(int domain, int service, int protocol, int port
 
     sock = socket(domain, service, protocol);
     if (sock < 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
+        throw std::runtime_error("socket failed");
     }
 
     int opt = 1;
     if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt failed");
-        exit(EXIT_FAILURE);
+        throw std::runtime_error("setsockopt failed");
     }
 
     if (bind(sock, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
+        throw std::runtime_error("bind failed");
     }
 
     if (listen(sock, backlog) < 0) {
-        perror("listen failed");
-        exit(EXIT_FAILURE);
+        throw std::runtime_error("listen failed");
     }
 }
 

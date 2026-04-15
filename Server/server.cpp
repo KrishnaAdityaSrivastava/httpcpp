@@ -1,13 +1,13 @@
 #include "server.hpp"
 
+#include <stdexcept>
 #include <unistd.h>
 
 #include "http_io.hpp"
 #include "router.hpp"
 
-HTTP::Server::Server(int domain, int service, int protocol, int port, u_long interface, int bklg) {
-    socket = new ListenSocket(domain, service, protocol, port, interface, bklg);
-}
+HTTP::Server::Server(int domain, int service, int protocol, int port, u_long interface, int bklg)
+    : socket(new ListenSocket(domain, service, protocol, port, interface, bklg)), routes() {}
 
 HTTP::Server::~Server() {
     delete socket;
@@ -15,12 +15,12 @@ HTTP::Server::~Server() {
 
 HTTP::ListenSocket* HTTP::Server::get_socket() { return socket; }
 
-void HTTP::Server::get(const std::string& path, HandlerFn handler) {
-    routes.push_back(Route{"GET", path, handler});
+void HTTP::Server::get(const std::string& path, Handler* handler) {
+    routes.emplace_back("GET", path, handler);
 }
 
-void HTTP::Server::post(const std::string& path, HandlerFn handler) {
-    routes.push_back(Route{"POST", path, handler});
+void HTTP::Server::post(const std::string& path, Handler* handler) {
+    routes.emplace_back("POST", path, handler);
 }
 
 int HTTP::Server::accepter() {
@@ -34,7 +34,7 @@ void HTTP::Server::handle_client_connection(int client_socket) {
     setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     HTTP::HttpIO io;
 
-    while(true){
+    while (true) {
         Request req;
         if (!io.read_request_from_socket(client_socket, req)) {
             break;
@@ -46,7 +46,7 @@ void HTTP::Server::handle_client_connection(int client_socket) {
             close(client_socket);
             return;
         }
-        else io.send_response(client_socket, res);
+        io.send_response(client_socket, res);
 
         auto it = req.headers.find("Connection");
         if (it != req.headers.end() && it->second == "close") {
@@ -58,12 +58,14 @@ void HTTP::Server::handle_client_connection(int client_socket) {
 
 void HTTP::Server::launch() {
     while (true) {
-        int client_socket = accepter();
-
-        if (client_socket < 0) {
+        try {
+            int client_socket = accepter();
+            if (client_socket < 0) {
+                continue;
+            }
+            handle_client_connection(client_socket);
+        } catch (const std::runtime_error&) {
             continue;
         }
-
-        handle_client_connection(client_socket);
     }
 }
