@@ -6,7 +6,6 @@
 
 namespace {
 
-    // Returns true if str ends with suffix.
     bool ends_with(const std::string& str, const std::string& suffix) {
         if (str.length() < suffix.length()) {
             return false;
@@ -14,7 +13,6 @@ namespace {
         return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
     }
 
-    // Maps file extension to MIME type for HTTP Content-Type header.
     std::string get_mime_type(const std::string& path) {
         if (ends_with(path, ".html")) return "text/html";
         if (ends_with(path, ".css")) return "text/css";
@@ -26,7 +24,6 @@ namespace {
         return "application/octet-stream";
     }
 
-    // Converts common HTTP status code to status text.
     std::string status_text_from_code(int status) {
         if (status == 200) return "OK";
         if (status == 201) return "Created";
@@ -34,10 +31,9 @@ namespace {
         return "OK";
     }
 
-    constexpr size_t MAX_HEADER_BYTES = 16 * 1024;       // 16 KB
-    constexpr size_t MAX_BODY_BYTES   = 1 * 1024 * 1024; // 1 MB
+    constexpr size_t MAX_HEADER_BYTES = 16 * 1024;
+    constexpr size_t MAX_BODY_BYTES   = 1 * 1024 * 1024;
 
-    // Parses a decimal positive integer into size_t safely.
     bool parse_size_t_decimal(std::string_view s, size_t& out) {
         if (s.empty()) return false;
         unsigned long long tmp = 0;
@@ -47,9 +43,8 @@ namespace {
         return true;
     }
 
-} // namespace
+}
 
-// Reads one HTTP request from the socket and fills Request fields.
 bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
     std::string buffer;
     buffer.reserve(4096);
@@ -60,7 +55,7 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
 
     while (true) {
         const ssize_t bytes = ::read(client_socket, temp, sizeof(temp));
-        if (bytes == 0) return false;   // peer closed
+        if (bytes == 0) return false;
         if (bytes < 0) {
             perror("read");
             return false;
@@ -68,21 +63,18 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
 
         buffer.append(temp, static_cast<size_t>(bytes));
 
-        // Header size cap before header terminator found
         if (header_end == std::string::npos && buffer.size() > MAX_HEADER_BYTES) {
-            return false; // too large header
+            return false;
         }
 
         if (header_end == std::string::npos) {
             header_end = buffer.find("\r\n\r\n");
             if (header_end == std::string::npos) continue;
 
-            // header bytes excludes trailing \r\n\r\n
             if (header_end > MAX_HEADER_BYTES) return false;
 
             std::string_view headers(buffer.data(), header_end);
 
-            // Parse Content-Length safely (case-sensitive for now)
             size_t cl_pos = headers.find("Content-Length:");
             if (cl_pos != std::string::npos) {
                 size_t start = cl_pos + 15;
@@ -99,18 +91,16 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
             }
         }
 
-        // Overflow-safe check
         if (header_end > SIZE_MAX - 4) return false;
 
         size_t total_needed = header_end + 4;
 
         if (content_length > SIZE_MAX - total_needed) return false;
-        
+
         total_needed += content_length;
 
         if (buffer.size() < total_needed) continue;
 
-        // Parse request line from buffered data
         size_t line_end = buffer.find("\r\n");
         if (line_end == std::string::npos || line_end == 0) return false;
 
@@ -126,7 +116,6 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
         std::string path(request_line.substr(first_space + 1, second_space - first_space - 1));
         std::string version(request_line.substr(second_space + 1));
 
-        // Optional protocol checks
         if (version != "HTTP/1.1" && version != "HTTP/1.0") return false;
         if (method != "GET" && method != "POST" && method != "PUT" &&
             method != "DELETE" && method != "PATCH" && method != "HEAD") {
@@ -138,91 +127,15 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
         req.version      = std::move(version);
         req.body.assign(buffer.data() + header_end + 4, content_length);
 
-        //size_t consumed = total_needed;
-        //buffer.erase(0, consumed);
         return true;
     }
 }
 
-
-// bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
-//     std::string buffer;
-//     char temp[4096];
-
-//     size_t header_end = std::string::npos;
-//     size_t content_length = 0;
-
-//     while (true) {
-//         const ssize_t bytes = read(client_socket, temp, sizeof(temp));
-//         if (bytes == 0) {
-//             return false;
-//         }
-//         if (bytes < 0) {
-//             perror("read");
-//             return false;
-//         }
-
-//         buffer.append(temp, bytes);
-
-//         if (header_end == std::string::npos) {
-//             header_end = buffer.find("\r\n\r\n");
-//             if (header_end == std::string::npos) {
-//                 continue;
-//             }
-
-//             const std::string headers = buffer.substr(0, header_end);
-//             const size_t cl_pos = headers.find("Content-Length:");
-//             if (cl_pos != std::string::npos) {
-//                 size_t start = cl_pos + 15;
-//                 while (start < headers.size() && headers[start] == ' ') {
-//                     start++;
-//                 }
-//                 const size_t end = headers.find("\r\n", start);
-//                 content_length = std::stoul(headers.substr(start, end - start));
-//                 //if (content_length > )
-//             }
-//         }
-
-//         const size_t total_needed = header_end + 4 + content_length;
-//         if (buffer.size() < total_needed) {
-//             continue;
-//         }
-
-//         const std::string raw_request = buffer.substr(0, total_needed);
-//         const size_t line_end = raw_request.find("\r\n");
-//         const std::string request_line = raw_request.substr(0, line_end);
-
-//         const size_t first_space = request_line.find(' ');
-//         const size_t second_space = request_line.find(' ', first_space + 1);
-
-//         req.route.method = request_line.substr(0, first_space);
-//         req.route.path = request_line.substr(first_space + 1, second_space - first_space - 1);
-//         req.version = request_line.substr(second_space + 1);
-//         req.body = raw_request.substr(header_end + 4, content_length);
-
-//         std::cout << "Method: " << req.route.method << "\n";
-//         std::cout << "Path: " << req.route.path << "\n";
-//         std::cout << "Body size: " << req.body.size() << "\n";
-
-//         return true;
-//     }
-// }
-
-// Sends a text/body HTTP response using writev for headers+body.
 void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     std::string headers;
     headers.reserve(256);
 
     headers += "HTTP/1.1 " + std::to_string(res.status) + " " + status_text_from_code(res.status) + "\r\n";
-
-    // std::string response;
-    // response.reserve(res.body.size() + 256);
-
-    // response += "HTTP/1.1 ";
-    // response += std::to_string(res.status);
-    // response += " ";
-    // response += status_text_from_code(res.status);
-    // response += "\r\n";
 
     bool has_length = false;
     bool has_type = false;
@@ -271,7 +184,6 @@ void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     }
 }
 
-// Sends a file response by opening path directly and streaming with sendfile.
 void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path) {
     const int fd = open(path.c_str(), O_RDONLY);
     if (fd == -1) {

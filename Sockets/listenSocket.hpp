@@ -11,18 +11,17 @@ class ListenSocket {
     int backlog;
 
   public:
-    // Creates and starts listening socket.
+
     ListenSocket(int domain, int service, int protocol, int port, u_long interface, int bklg);
-    // Closes socket descriptor.
+
     ~ListenSocket();
 
-    // Returns bound address.
     struct sockaddr_in get_address() const;
-    // Returns socket descriptor.
+
     int get_sock() const;
-    // Returns backlog value.
+
     int get_backlog() const;
 };
-} // namespace HTTP
+}
 
 #endif
