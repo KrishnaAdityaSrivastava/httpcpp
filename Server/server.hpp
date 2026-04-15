@@ -11,6 +11,8 @@
 #include "../network.hpp"
 
 namespace HTTP {
+class Handler;
+
 class Server {
   private:
     ListenSocket* socket;
@@ -19,7 +21,6 @@ class Server {
     std::vector<Route> routes;
 
   public:
-
     Server(int domain, int service, int protocol, int port, u_long interface, int bklg);
 
     ~Server();
@@ -28,9 +29,9 @@ class Server {
 
     void handle_client_connection(int client_socket);
 
-    void get(const std::string& path, HandlerFn handler);
+    void get(const std::string& path, Handler* handler);
 
-    void post(const std::string& path, HandlerFn handler);
+    void post(const std::string& path, Handler* handler);
 
     void launch();
 };

@@ -1,5 +1,9 @@
 #include "router.hpp"
 
+#include <stdexcept>
+
+#include "handler.hpp"
+
 bool HTTP::Router::match_path(const std::string& route_path, const std::string& req_path,
                               std::unordered_map<std::string, std::string>& params) {
     size_t i = 0;
@@ -35,7 +39,7 @@ HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HT
     HTTP::Response res;
 
     for (const auto& route : routes) {
-        if (route.method != req.route.method) {
+        if (route.method != req.method) {
             continue;
         }
         if (route.handler == nullptr) {
@@ -43,14 +47,17 @@ HTTP::Response HTTP::Router::dispatch(const std::vector<HTTP::Route>& routes, HT
         }
 
         std::unordered_map<std::string, std::string> params;
-        if (!match_path(route.path, req.route.path, params)) {
+        if (!match_path(route.path, req.path, params)) {
             continue;
         }
 
         req.params = params;
 
         try {
-            res = route.handler(req);
+            res = route.handler->handle(req);
+        } catch (const std::runtime_error& ex) {
+            res.status = 500;
+            res.body = ex.what();
         } catch (...) {
             res.status = 500;
             res.body = "Internal Server Error";
