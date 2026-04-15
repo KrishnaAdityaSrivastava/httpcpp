@@ -7,7 +7,6 @@
 #include "request.hpp"
 #include "response.hpp"
 #include "route.hpp"
-#include "handler.hpp"
 
 #include "../network.hpp"
 

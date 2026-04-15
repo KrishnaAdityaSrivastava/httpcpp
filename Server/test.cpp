@@ -6,7 +6,6 @@
 #include <string>
 #include <unordered_map>
 
-#include "handler.hpp"
 #include "request.hpp"
 #include "response.hpp"
 #include "server.hpp"
@@ -124,7 +123,7 @@ bool check_user_credentials(const std::string& username, const std::string& pass
 }
 
 HTTP::Response render_login_page(const std::string& message = "") {
-    std::string content = "<h1>Auth demo using current HTTP framework</h1>";
+    std::string content = "<h1>Auth demo using HTTP framework</h1>";
 
     if (!message.empty()) {
         content += "<p><strong>Status:</strong> " + message + "</p>";
@@ -147,9 +146,7 @@ HTTP::Response render_login_page(const std::string& message = "") {
         "<label for=\"login-password\">Password</label>"
         "<input id=\"login-password\" name=\"password\" type=\"password\" required>"
         "<button type=\"submit\">Login</button>"
-        "</form>"
-
-        "<p>Users are stored in <code>users.txt</code> as <code>username:password</code>.</p>";
+        "</form>";
 
     HTTP::Response res(200, html_page(content));
     res.headers["Content-Type"] = "text/html";

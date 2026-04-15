@@ -1,216 +1,89 @@
 #include "http_io.hpp"
 #include <charconv>
-#include <cstddef>
-#include <cstdint>
-#include <string_view>
+#include <string>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/sendfile.h>
 
 namespace {
 
-    bool ends_with(const std::string& str, const std::string& suffix) {
-        if (str.length() < suffix.length()) {
-            return false;
-        }
-        return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
-    }
+std::string get_mime_type(const std::string& path) {
+    if (path.find(".html") != std::string::npos) return "text/html";
+    if (path.find(".css") != std::string::npos) return "text/css";
+    if (path.find(".js") != std::string::npos) return "application/javascript";
+    if (path.find(".png") != std::string::npos) return "image/png";
+    if (path.find(".jpg") != std::string::npos) return "image/jpeg";
+    return "text/plain";
+}
 
-    std::string get_mime_type(const std::string& path) {
-        if (ends_with(path, ".html")) return "text/html";
-        if (ends_with(path, ".css")) return "text/css";
-        if (ends_with(path, ".js")) return "application/javascript";
-        if (ends_with(path, ".png")) return "image/png";
-        if (ends_with(path, ".jpg") || ends_with(path, ".jpeg")) return "image/jpeg";
-        if (ends_with(path, ".gif")) return "image/gif";
-        if (ends_with(path, ".json")) return "application/json";
-        return "application/octet-stream";
-    }
-
-    std::string status_text_from_code(int status) {
-        if (status == 200) return "OK";
-        if (status == 201) return "Created";
-        if (status == 404) return "Not Found";
-        return "OK";
-    }
-
-    constexpr size_t MAX_HEADER_BYTES = 16 * 1024;
-    constexpr size_t MAX_BODY_BYTES   = 1 * 1024 * 1024;
-
-    bool parse_size_t_decimal(std::string_view s, size_t& out) {
-        if (s.empty()) return false;
-        unsigned long long tmp = 0;
-        auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), tmp);
-        if (ec != std::errc{} || ptr != s.data() + s.size()) return false;
-        out = static_cast<size_t>(tmp);
-        return true;
-    }
+std::string status_text(int code) {
+    if (code == 200) return "OK";
+    if (code == 404) return "Not Found";
+    return "OK";
+}
 
 }
 
 bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
     std::string buffer;
-    buffer.reserve(4096);
     char temp[4096];
 
-    size_t header_end = std::string::npos;
-    size_t content_length = 0;
+    int bytes = read(client_socket, temp, sizeof(temp));
+    if (bytes <= 0) return false;
 
-    while (true) {
-        const ssize_t bytes = ::read(client_socket, temp, sizeof(temp));
-        if (bytes == 0) return false;
-        if (bytes < 0) {
-            perror("read");
-            return false;
-        }
+    buffer = std::string(temp, bytes);
 
-        buffer.append(temp, static_cast<size_t>(bytes));
+    size_t sp1 = buffer.find(' ');
+    size_t sp2 = buffer.find(' ', sp1 + 1);
+    size_t line_end = buffer.find("\r\n");
 
-        if (header_end == std::string::npos && buffer.size() > MAX_HEADER_BYTES) {
-            return false;
-        }
+    req.route.method = buffer.substr(0, sp1);
+    req.route.path   = buffer.substr(sp1 + 1, sp2 - sp1 - 1);
+    req.version      = buffer.substr(sp2 + 1, line_end - sp2 - 1);
 
-        if (header_end == std::string::npos) {
-            header_end = buffer.find("\r\n\r\n");
-            if (header_end == std::string::npos) continue;
-
-            if (header_end > MAX_HEADER_BYTES) return false;
-
-            std::string_view headers(buffer.data(), header_end);
-
-            size_t cl_pos = headers.find("Content-Length:");
-            if (cl_pos != std::string::npos) {
-                size_t start = cl_pos + 15;
-                while (start < headers.size() && headers[start] == ' ') ++start;
-
-                size_t end = headers.find("\r\n", start);
-                if (end == std::string::npos) end = headers.size();
-
-                std::string_view clv = headers.substr(start, end - start);
-                if (!parse_size_t_decimal(clv, content_length)) return false;
-                if (content_length > MAX_BODY_BYTES) return false;
-            } else {
-                content_length = 0;
-            }
-        }
-
-        if (header_end > SIZE_MAX - 4) return false;
-
-        size_t total_needed = header_end + 4;
-
-        if (content_length > SIZE_MAX - total_needed) return false;
-
-        total_needed += content_length;
-
-        if (buffer.size() < total_needed) continue;
-
-        size_t line_end = buffer.find("\r\n");
-        if (line_end == std::string::npos || line_end == 0) return false;
-
-        std::string_view request_line(buffer.data(), line_end);
-
-        size_t first_space = request_line.find(' ');
-        if (first_space == std::string::npos || first_space == 0) return false;
-
-        size_t second_space = request_line.find(' ', first_space + 1);
-        if (second_space == std::string::npos || second_space <= first_space + 1) return false;
-
-        std::string method(request_line.substr(0, first_space));
-        std::string path(request_line.substr(first_space + 1, second_space - first_space - 1));
-        std::string version(request_line.substr(second_space + 1));
-
-        if (version != "HTTP/1.1" && version != "HTTP/1.0") return false;
-        if (method != "GET" && method != "POST" && method != "PUT" &&
-            method != "DELETE" && method != "PATCH" && method != "HEAD") {
-            return false;
-        }
-
-        req.route.method = std::move(method);
-        req.route.path   = std::move(path);
-        req.version      = std::move(version);
-        req.body.assign(buffer.data() + header_end + 4, content_length);
-
-        return true;
+    size_t body_pos = buffer.find("\r\n\r\n");
+    if (body_pos != std::string::npos) {
+        req.body = buffer.substr(body_pos + 4);
     }
+
+    return true;
 }
 
 void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
-    std::string headers;
-    headers.reserve(256);
+    std::string body = res.body;
 
-    headers += "HTTP/1.1 " + std::to_string(res.status) + " " + status_text_from_code(res.status) + "\r\n";
+    std::string response =
+        "HTTP/1.1 " + std::to_string(res.status) + " " + status_text(res.status) + "\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+        "\r\n" +
+        body;
 
-    bool has_length = false;
-    bool has_type = false;
-    bool has_conn = false;
-
-    for (const auto& [key, value] : res.headers) {
-        if (key == "Content-Length") has_length = true;
-        if (key == "Content-Type") has_type = true;
-        if (key == "Connection") has_conn = true;
-
-        headers += key + ": " + value + "\r\n";
-    }
-
-    if (!has_type) headers += "Content-Type: text/plain\r\n";
-    if (!has_conn) {
-        headers += "Connection: keep-alive\r\n";
-        headers += "Keep-Alive: timeout=5, max=100\r\n";
-    }
-    if (!has_length) headers += "Content-Length: " + std::to_string(res.body.size()) + "\r\n";
-
-    headers += "\r\n";
-
-    struct iovec iov[2];
-    iov[0].iov_base = (void*)headers.data();
-    iov[0].iov_len  = headers.size();
-    iov[1].iov_base = (void*)res.body.data();
-    iov[1].iov_len  = res.body.size();
-
-    size_t total_sent = 0;
-    while (total_sent < headers.size()+ res.body.size()) {
-        ssize_t sent = writev(client_socket, iov, 2);
-
-        if (sent <= 0) break;
-
-        total_sent += sent;
-
-        if (sent >= (ssize_t)iov[0].iov_len) {
-            sent -= iov[0].iov_len;
-            iov[0].iov_len = 0;
-            iov[1].iov_base = (char*)iov[1].iov_base + sent;
-            iov[1].iov_len -= sent;
-        } else {
-            iov[0].iov_base = (char*)iov[0].iov_base + sent;
-            iov[0].iov_len -= sent;
-        }
-    }
+    write(client_socket, response.c_str(), response.size());
 }
 
 void HTTP::HttpIO::send_file_response(int client_socket, const std::string& path) {
-    const int fd = open(path.c_str(), O_RDONLY);
-    if (fd == -1) {
-        const std::string not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-        write(client_socket, not_found.c_str(), not_found.size());
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::string msg = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        write(client_socket, msg.c_str(), msg.size());
         return;
     }
 
     struct stat st;
     fstat(fd, &st);
 
-    const std::string headers = "HTTP/1.1 200 OK\r\n"
-                                "Content-Type: " +
-                                get_mime_type(path) + "\r\n"
-                                                    "Content-Length: " +
-                                std::to_string(st.st_size) + "\r\n"
-                                                        "Connection: close\r\n\r\n";
+    std::string header =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: " + get_mime_type(path) + "\r\n"
+        "Content-Length: " + std::to_string(st.st_size) + "\r\n"
+        "\r\n";
 
-    write(client_socket, headers.c_str(), headers.size());
+    write(client_socket, header.c_str(), header.size());
 
     off_t offset = 0;
-    while (offset < st.st_size) {
-        const ssize_t sent = sendfile(client_socket, fd, &offset, st.st_size - offset);
-        if (sent <= 0) {
-            break;
-        }
-    }
+    sendfile(client_socket, fd, &offset, st.st_size);
 
     close(fd);
 }
