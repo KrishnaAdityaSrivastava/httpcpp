@@ -156,9 +156,8 @@ HTTP::Response render_login_page(const std::string& message = "") {
     return res;
 }
 
-} // namespace
+}
 
-// Handler for "/" route: returns the login/register page.
 HTTP::Response home_page(const HTTP::Request&) { return render_login_page(); }
 
 HTTP::Response register_page(const HTTP::Request& req) {
@@ -195,7 +194,6 @@ HTTP::Response login_page(const HTTP::Request& req) {
     return render_login_page("Login failed: invalid username or password.");
 }
 
-// Entry point: registers routes and starts the HTTP server loop.
 int main() {
     signal(SIGPIPE, SIG_IGN);
 

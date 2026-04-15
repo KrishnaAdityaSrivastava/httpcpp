@@ -24,4 +24,4 @@ class LambdaHandler : public IRequestHandler {
     Response handle(const Request& req) const override { return fn(req); }
 };
 
-} // namespace HTTP
+}

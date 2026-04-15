@@ -6,7 +6,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-// Creates, configures, binds, and starts the listening socket.
 HTTP::ListenSocket::ListenSocket(int domain, int service, int protocol, int port, u_long interface, int bklg)
     : backlog(bklg) {
     address.sin_family = domain;
@@ -36,18 +35,14 @@ HTTP::ListenSocket::ListenSocket(int domain, int service, int protocol, int port
     }
 }
 
-// Closes the underlying socket on object destruction.
 HTTP::ListenSocket::~ListenSocket() {
     if (sock >= 0) {
         close(sock);
     }
 }
 
-// Returns the bound socket address.
 struct sockaddr_in HTTP::ListenSocket::get_address() const { return address; }
 
-// Returns the raw listening socket file descriptor.
 int HTTP::ListenSocket::get_sock() const { return sock; }
 
-// Returns configured listen backlog size.
 int HTTP::ListenSocket::get_backlog() const { return backlog; }
