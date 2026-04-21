@@ -1,367 +1,215 @@
-# From Sockets to Server: What I Learned Building My Own Web Server
+# From Sockets to Throughput Curves: A Story of Building (and Stressing) My HTTP Server
 
 ---
 
-## 1. Introduction
+## 1) The Question That Started It
 
-Most of us interact with web servers every day, but usually through frameworks and platforms that hide the hard parts. You ship an API, deploy it, and move on.
+I started this project with a simple curiosity: if I remove frameworks and build the HTTP stack myself in C++, where does performance actually go under load?
 
-I wanted to understand what happens before all that convenience.
+So this server became an experiment, not a clone of NGINX. I wanted measured answers to four things:
 
-So I built a small HTTP server in C++ from scratch—starting with POSIX sockets, then layering in request parsing, routing, static file serving, and concurrency. No external web framework. Just syscalls, strings, and a lot of edge cases.
+- throughput (requests/second)
+- latency (especially p90/p99)
+- kernel vs user-space CPU cost
+- scaling behavior as concurrent connections rise
 
-At first glance, a web server sounds simple: accept a connection, read bytes, send bytes back. In practice, each of those steps has sharp corners.
+The recurring question through every benchmark run was:
 
-This post is a walkthrough of that journey—the architecture choices, the trade-offs, what broke first, and what changed once I tested it under load.
-
----
-
-## 2. Motivation
-
-There was no business requirement for this project.
-
-This was about replacing assumptions with understanding.
-
-I’d used frameworks long enough to start asking questions they rarely force you to think about:
-
-- How do you know when an HTTP request is fully received?
-- What happens if headers arrive in fragments?
-- Why does a simple server feel fine with 10 users but collapse with 500?
-- How do mature servers like Nginx stay fast under sustained concurrency?
-
-Building a server from scratch turned those questions from abstract ideas into implementation constraints.
-
-My target wasn’t “production-ready Nginx competitor.” It was:
-
-- learn low-level networking mechanics
-- implement a clean request → route → response pipeline
-- understand where throughput and latency are actually lost
+> **What becomes the bottleneck next, and why?**
 
 ---
 
-## 3. High-Level Architecture
+## 2) The Starting Architecture
 
-Before writing code, I defined a strict request pipeline:
+The implementation is intentionally layered:
 
-```text
-Client → Socket Accept → HTTP Read/Parse → Route Dispatch → Response Write → Client
-```
+1. **Socket setup + accept loop**
+2. **HTTP I/O and parsing**
+3. **Routing / handler dispatch**
+4. **Response writing and optional static file serving**
+5. **Concurrency strategy (thread pool and/or epoll mode)**
 
-In code, that maps to clear components:
-
-- **Socket layer**: TCP setup (`socket`, `bind`, `listen`, `accept`)
-- **HTTP I/O layer**: read from socket, parse request line/body, write response
-- **Router**: match method/path, including dynamic path params
-- **Server runtime**: connection loop + thread pool dispatch
-
-This separation ended up being the biggest force multiplier in the project. When parsing failed, I didn’t have to wonder whether it was routing logic. When concurrency issues showed up, I could focus on server runtime and I/O behavior.
+That structure made iteration easier. Each benchmark mode changed one major part of the runtime story, so I could see where time shifted.
 
 ---
 
-## 4. Networking Layer (POSIX Sockets)
+## 3) Chapter One: `BACKLOG = MAX` and the Plateau
 
-Everything starts with classic socket setup:
+### Workload snapshots
 
-```cpp
-int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-bind(server_fd, ...);
-listen(server_fd, backlog);
-```
+With backlog maxed and blocking behavior in place, I ran 20-second tests (`wrk` with 4 threads) at increasing connection counts:
 
-Then the server blocks on:
+- **50 conns**: 5009.75 req/s, avg latency 9.87ms
+- **100 conns**: 5087.10 req/s, avg latency 19.68ms
+- **200 conns**: 4973.69 req/s, avg latency 40.40ms
+- **400 conns**: 5137.53 req/s, avg latency 77.40ms
+- **800 conns**: 5135.72 req/s, avg latency 154.08ms
 
-```cpp
-int client_fd = accept(server_fd, ...);
-```
+### Why this output happened
 
-Each accepted socket becomes a unit of work for request handling.
+This was the first big lesson:
 
-### Why `SO_REUSEADDR` matters
+- Throughput stayed near **~5K req/s**
+- Latency kept stretching as connections increased
 
-Without `SO_REUSEADDR`, restarting during development often fails with “address already in use” because the old socket can remain in `TIME_WAIT`. This is one of those tiny lines of code that saves a lot of frustration.
+That is queueing saturation (M/M/1-like behavior): once service capacity is full, extra concurrency no longer creates extra completed work. It only increases waiting time.
 
-### The lifecycle (the real one)
-
-On paper:
-
-1. accept
-2. read request
-3. process
-4. write response
-5. close
-
-In reality:
-
-- reads are partial
-- clients disconnect mid-write
-- malformed requests appear constantly in stress tests
-- “close or keep-alive?” changes control flow everywhere
+So the result was consistent and expected: **same amount of work done per second, much longer time spent waiting per request**.
 
 ---
 
-## 5. Request Handling Pipeline
+## 4) Chapter Two: Thread Pool Only (~21.5K req/s)
 
-This was where the project became less “toy” and more “protocol engineering.”
+### Measurement
 
-### Partial reads are the default, not the exception
+At 4 threads / 800 connections:
 
-A single `read()` does **not** guarantee a complete HTTP request. Data can arrive in chunks for many reasons (network buffering, sender behavior, packet boundaries).
+- **21,489.98 req/s**
+- **avg latency 23.50ms**
+- p99 **48.85ms**
 
-So the parser accumulates bytes into a buffer and scans for the header delimiter:
+### Why this output improved
 
-```text
-\r\n\r\n
-```
+Compared to the ~5K plateau, this suggests the runtime removed major serialization/idle points:
 
-Until that delimiter appears, headers are incomplete.
+- more real worker parallelism
+- less wall-clock stalling around per-connection flow
+- better pipeline utilization of CPU + socket work
 
-### Determining body length safely
+### What perf says here
 
-After headers are complete, `Content-Length` determines how much body data to read.
+The perf report is heavy in syscall/network paths:
 
-A key implementation decision here was defensive parsing:
+- `entry_SYSCALL_64_after_hwframe`, `do_syscall_64`
+- `write`, `ksys_write`, `vfs_write`
+- `tcp_sendmsg`, `tcp_write_xmit`, `__tcp_transmit_skb`
+- `ip_output`, `__dev_queue_xmit`, softirq/NAPI paths
 
-- cap header size (e.g., 16 KB)
-- cap body size (e.g., 1 MB)
-- parse `Content-Length` with integer conversion checks
-- reject malformed or unsupported request lines early
-
-Those checks improved stability more than any performance tweak.
-
-### Parsing into structured request data
-
-From raw bytes, the server extracts:
-
-- method (`GET`, `POST`, etc.)
-- path (`/`, `/data/123`, ...)
-- version (`HTTP/1.1`, `HTTP/1.0`)
-- body (if present)
-
-Once you do this yourself, you realize HTTP parsing is mostly careful boundary management.
+Interpretation: bottlenecks moved away from obvious app-layer logic and toward **kernel-mediated I/O work**. That is usually a sign that the server is finally feeding the network stack effectively.
 
 ---
 
-## 6. Routing System
+## 5) Chapter Three: Epoll Only (~43.3K req/s)
 
-After parsing, the next question is: “Which handler should run?”
+### Measurement
 
-### Static routes
+At 4 threads / 800 connections:
 
-The straightforward case:
+- **43,308.99 req/s**
+- **avg latency 18.40ms**
+- p99 **21.92ms**
 
-- `GET /`
-- `POST /submit`
+### Why this output jumped
 
-### Dynamic routes
+Epoll changed the shape of the runtime:
 
-I added support for patterns like:
+- no O(N) socket scanning
+- kernel signals exactly which fds are ready
+- less time blocked on inactive sockets
+- wakeups map better to useful work
 
-```text
-/data/:id
-```
+So at high connection counts, the server spends more cycles doing work and fewer cycles checking sockets that are not ready.
 
-Matching is done by splitting route/request paths into segments and binding parameter values where route segments start with `:`.
+### What perf says here
 
-So `/data/sample.html` can map `id = sample.html` and pass that into handler logic.
+Perf still concentrates on syscall and TCP stack symbols (`writev`, `do_writev`, `sock_write_iter`, `tcp_sendmsg`, `ip_output`, softirq/NAPI), with user-space launch/router still visible.
 
-### Error behavior
+That indicates:
 
-Routing also forced explicit failure handling:
+- app dispatch remains in play
+- but most heavy cost has shifted into efficient send/receive kernel paths
+- `writev` suggests helpful batching/vectored output behavior
 
-- no route match → default empty/404-style response path
-- handler throws → catch and return `500 Internal Server Error`
-
-This is one of the first places “framework ergonomics” become visible—you end up rebuilding conventions one decision at a time.
-
----
-
-## 7. Response & Static File Serving
-
-### Response assembly
-
-For regular responses, the server builds status line + headers + body:
-
-```text
-HTTP/1.1 200 OK
-Content-Type: text/html
-Content-Length: ...
-Connection: keep-alive
-
-<body...>
-```
-
-One practical optimization here is using `writev()` to send headers and body in a single vectored write path.
-
-### Static files with `sendfile`
-
-For file responses, I used `sendfile()`:
-
-```cpp
-sendfile(client_socket, file_fd, &offset, file_size - offset);
-```
-
-This avoids extra user-space copies and noticeably reduces overhead for larger files.
-
-### Security guardrails
-
-Serving files safely required path controls:
-
-- decode URL path
-- resolve against a fixed `public/` base directory
-- canonicalize and verify requested file stays under that base
-
-That prevents directory traversal attempts such as `../../etc/passwd` from escaping the static root.
+The low spread between median and tail latencies matches that interpretation.
 
 ---
 
-## 8. Concurrency Model
+## 6) Chapter Four: Epoll + Threading (~57.7K req/s)
 
-The server accepts connections on the main thread and pushes work into a fixed-size thread pool.
+### Measurement
 
-### Why a thread pool
+At 4 threads / 1200 connections:
 
-It’s a good middle ground:
+- **57,650.29 req/s**
+- **avg latency 20.50ms**
+- p99 **30.39ms**
 
-- simpler than a full event-loop architecture
-- avoids unbounded thread creation
-- easy to reason about ownership and task flow
+### Why this became the best mode
 
-### Trade-offs
+This combines the two strongest levers:
 
-**Pros**
+1. **Readiness-driven I/O (epoll)**
+2. **Parallel execution capacity (threading)**
 
-- predictable worker count
-- straightforward implementation with mutex + condition variable
-- good enough for moderate concurrency
+So the server can handle:
 
-**Cons**
+- many connected clients
+- many simultaneous ready events
 
-- still uses blocking I/O per worker
-- pool saturation introduces queueing latency
-- not ideal for very high connection counts
+without falling back to O(N) checks or single-lane execution.
 
-This is the classic systems lesson: architecture choices dominate before micro-optimizations even matter.
+### What perf says here
 
----
-
-## 9. Benchmarking & Performance
-
-This was the most educational part of the project.
-
-I tested with tools like `wrk` and `ab` using varying thread/connection combinations and request patterns (small text responses vs static file responses).
-
-### What I measured
-
-I focused on:
-
-- **Requests/sec (throughput)**
-- **p50/p95/p99 latency**
-- **behavior under increasing concurrency**
-- **error rate under stress**
-
-### How to interpret results (beyond “bigger number wins”)
-
-A useful way to read benchmark output is by regime:
-
-1. **Low concurrency**: server feels fast; little contention
-2. **Moderate concurrency**: throughput rises, latency starts widening
-3. **Saturation**: throughput plateaus; tail latency spikes
-
-That saturation point is the real signal. It tells you where your architecture stops scaling efficiently.
-
-### Why mature servers still outperform this design
-
-Compared to event-driven servers (Nginx-style), my server pays higher per-request overhead from:
-
-- blocking reads/writes per worker
-- context switching and queue contention
-- repeated string parsing/allocations
-
-Even with `sendfile` helping the static path, the concurrency model remains the dominant limiter at higher loads.
-
-### Most important insight from benchmarking
-
-Performance tuning was less about “faster parsing tricks” and more about removing structural bottlenecks.
-
-In other words:
-
-- **first fix architecture**, then optimize implementation details
-
-That single idea changed how I approach backend performance work.
+Perf shows substantial weight in thread-pool worker frames plus syscall/TCP transmit paths. In practice that means workers are busy and the kernel/networking path is now the practical frontier.
 
 ---
 
-## 10. Challenges & Learnings
+## 7) NGINX Comparison: The Last Gap
 
-### Partial reads broke naive assumptions
+### Measurement (NGINX @ 4 threads / 800 conns)
 
-Expecting complete requests from single `read()` calls caused early parsing bugs.
+- **60,438.67 req/s**
+- **avg latency 13.09ms**
+- p99 **32.54ms**
 
-### Broken pipes happen in normal operation
+### Why NGINX still leads
 
-Clients can disconnect before a write finishes. Ignoring `SIGPIPE` and handling short/failed writes made behavior much more robust.
+Your notes are accurate: most time is kernel-side, while NGINX user-space cost is relatively small.
 
-### Real HTTP traffic is messy
+This suggests NGINX is doing what mature event-driven servers do best:
 
-Malformed request lines, missing/invalid lengths, and odd edge cases show up quickly once you load test.
+- minimal userspace overhead per request
+- efficient buffering and control flow
+- fast handoff to the same Linux networking primitives
 
-### Concurrency bugs are often timing-sensitive
-
-Issues are harder to reproduce consistently, which makes observability and isolated component boundaries crucial.
-
----
-
-## 11. Security & Edge Cases
-
-Even for a learning project, basic hardening matters.
-
-I added protections around:
-
-- **directory traversal** via canonical path checks
-- **oversized input** using header/body size limits
-- **request validation** (method/version and basic syntax checks)
-
-The broader lesson: correctness and safety are part of server performance too—because crashes, stalls, and undefined behavior are the worst latency of all.
+So the gap is less about “secret logic,” more about years of runtime-path refinement.
 
 ---
 
-## 12. Future Improvements
+## 8) The Perf Story Across All Modes
 
-If I were taking this further, I’d prioritize these upgrades:
+Across all runs, perf repeatedly highlights:
 
-1. **Event-driven I/O (`epoll`)** to reduce blocking-worker overhead
-2. **Better HTTP compliance** (header parsing, chunked transfer encoding)
-3. **Connection management** improvements (keep-alive limits, idle eviction)
-4. **Response/file caching** to cut repeated disk work
-5. **Metrics + observability** (request timings, queue depth, error counters)
+- syscall entry/exit
+- socket read/write paths
+- TCP transmit/receive internals
+- IP output/queueing
+- softirq/NAPI packet processing
 
-That roadmap moves it from “educational server” toward a real systems platform.
+Taken together, the progression is clear:
 
----
+1. Early architecture hit queueing saturation.
+2. Better concurrency (thread pool, epoll) increased useful throughput.
+3. At higher throughput, the dominant cost migrated into kernel networking work.
 
-## 13. Conclusion
-
-Building a web server from scratch gave me a more concrete mental model of backend systems than any framework tutorial could.
-
-The biggest takeaways:
-
-- networking APIs are simple to call, hard to use correctly under load
-- throughput and latency are mostly architecture outcomes
-- reliability comes from defensive parsing and failure handling
-- abstractions are powerful—but understanding what they abstract is even more powerful
-
-I started this project to satisfy curiosity. I finished with a clearer engineering instinct for performance, protocol boundaries, and systems trade-offs.
+That is exactly the evolution you want to see in a server that is maturing.
 
 ---
 
-## 14. References / Links
+## 9) Why Epoll Was Non-Negotiable
 
-- GitHub Repository: *(insert repo link)*
-- Beej’s Guide to Network Programming
-- Nginx architecture docs
-- RFC 7230 / RFC 9112 (HTTP/1.1 messaging)
+The practical issue was simple: I needed threads to stop idling on inactive clients.
+
+At high connection counts, checking every socket each cycle is O(N) and wastes CPU. Epoll flips that model: the kernel reports only ready sockets.
+
+So epoll here is not a micro-optimization; it is the mechanism that makes high-connection scaling feasible.
 
 ---
 
-If you want to make this post more memorable, the best next enhancement is to add **benchmark graphs** (throughput and p95 latency vs concurrent connections). Numbers are useful; curves tell the story.
+## 10) Final Takeaway
+
+If I had to summarize this project in one line:
+
+> It started as “build an HTTP server,” and became “learn how bottlenecks move as architecture improves.”
+
+The strongest lesson is that performance gains came mainly from architecture changes, then from implementation details. The numbers and perf traces now tell one consistent story from first prototype to near-NGINX territory.
