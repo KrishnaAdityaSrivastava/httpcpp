@@ -2,42 +2,40 @@
 
 ---
 
-## 1) The Question That Started It
+## 1) The Guiding Mental Model
 
-I started this project with a simple curiosity: if I remove frameworks and build the HTTP stack myself in C++, where does performance actually go under load?
+I built this HTTP server to answer one question: **where does performance go as load increases?**
 
-So this server became an experiment, not a clone of NGINX. I wanted measured answers to four things:
+The key model that emerged is simple: as architecture improves, bottlenecks move across layers:
 
-- throughput (requests/second)
-- latency (especially p90/p99)
-- kernel vs user-space CPU cost
-- scaling behavior as concurrent connections rise
+1. **Application/queueing behavior**
+2. **Concurrency model**
+3. **I/O readiness strategy**
+4. **Kernel/network stack cost**
 
-The recurring question through every benchmark run was:
-
-> **What becomes the bottleneck next, and why?**
+So this project is not “one optimization.” It is a sequence of bottleneck migrations measured with `wrk` and `perf`.
 
 ---
 
 ## 2) The Starting Architecture
 
-The implementation is intentionally layered:
+The implementation is layered:
 
 1. **Socket setup + accept loop**
 2. **HTTP I/O and parsing**
 3. **Routing / handler dispatch**
-4. **Response writing and optional static file serving**
-5. **Concurrency strategy (thread pool and/or epoll mode)**
+4. **Response writing and static file path**
+5. **Concurrency mode (thread pool and/or epoll)**
 
-That structure made iteration easier. Each benchmark mode changed one major part of the runtime story, so I could see where time shifted.
+That separation made each performance step measurable and explainable.
 
 ---
 
-## 3) Chapter One: `BACKLOG = MAX` and the Plateau
+## 3) Chapter One: `BACKLOG = MAX` and Saturation
 
-### Workload snapshots
+`BACKLOG = MAX` means the accept queue is configured to be as large as practical, reducing dropped incoming connections when bursts arrive.
 
-With backlog maxed and blocking behavior in place, I ran 20-second tests (`wrk` with 4 threads) at increasing connection counts:
+### Workload snapshots (20s, `wrk -t4`)
 
 - **50 conns**: 5009.75 req/s, avg latency 9.87ms
 - **100 conns**: 5087.10 req/s, avg latency 19.68ms
@@ -47,169 +45,115 @@ With backlog maxed and blocking behavior in place, I ran 20-second tests (`wrk` 
 
 ### Why this output happened
 
-This was the first big lesson:
+Throughput stayed near **5.0K–5.1K req/s** while latency rose sharply. This is M/M/1-like queueing behavior: think **one service lane with a growing line**. Once service capacity saturates, new connections mostly add waiting time, not completed work.
 
-- Throughput stayed near **~5K req/s**
-- Latency kept stretching as connections increased
-
-That is queueing saturation (M/M/1-like behavior): once service capacity is full, extra concurrency no longer creates extra completed work. It only increases waiting time.
-
-So the result was consistent and expected: **same amount of work done per second, much longer time spent waiting per request**.
+So the first bottleneck was queueing/saturation, not raw CPU arithmetic.
 
 ---
 
-## 4) Chapter Two: Thread Pool Only (~21.5K req/s)
+## 4) Chapter Two: Thread Pool Only
 
-### Measurement
-
-At 4 threads / 800 connections:
+### Measurement (4 threads / 800 conns)
 
 - **21,489.98 req/s**
 - **avg latency 23.50ms**
-- p99 **48.85ms**
+- **p99 48.85ms**
 
-### Why this output improved
+### What changed
 
-Compared to the ~5K plateau, this suggests the runtime removed major serialization/idle points:
+This stage removed concrete bottlenecks from the baseline path:
 
-- more real worker parallelism
-- less wall-clock stalling around per-connection flow
-- better pipeline utilization of CPU + socket work
+- less time blocked per connection
+- more request handling in parallel
+- less idle CPU while other sockets wait
 
-### What perf says here
-
-The perf report is heavy in syscall/network paths:
-
-- `entry_SYSCALL_64_after_hwframe`, `do_syscall_64`
-- `write`, `ksys_write`, `vfs_write`
-- `tcp_sendmsg`, `tcp_write_xmit`, `__tcp_transmit_skb`
-- `ip_output`, `__dev_queue_xmit`, softirq/NAPI paths
-
-Interpretation: bottlenecks moved away from obvious app-layer logic and toward **kernel-mediated I/O work**. That is usually a sign that the server is finally feeding the network stack effectively.
+Result: throughput jumped from ~5.1K to ~21.5K req/s because worker capacity was used continuously instead of stalling behind connection-level blocking.
 
 ---
 
-## 5) Chapter Three: Epoll Only (~43.3K req/s)
+## 5) Chapter Three: Epoll Only
 
-### Measurement
-
-At 4 threads / 800 connections:
+### Measurement (4 threads / 800 conns)
 
 - **43,308.99 req/s**
 - **avg latency 18.40ms**
-- p99 **21.92ms**
+- **p99 21.92ms**
 
-### Why this output jumped
+### What changed
 
-Epoll changed the shape of the runtime:
+Epoll replaced O(N) polling/checking with readiness-driven handling:
 
-- no O(N) socket scanning
-- kernel signals exactly which fds are ready
-- less time blocked on inactive sockets
-- wakeups map better to useful work
+- no full scan across inactive sockets
+- kernel reports only ready file descriptors
+- wakeups align with actionable I/O
 
-So at high connection counts, the server spends more cycles doing work and fewer cycles checking sockets that are not ready.
-
-### What perf says here
-
-Perf still concentrates on syscall and TCP stack symbols (`writev`, `do_writev`, `sock_write_iter`, `tcp_sendmsg`, `ip_output`, softirq/NAPI), with user-space launch/router still visible.
-
-That indicates:
-
-- app dispatch remains in play
-- but most heavy cost has shifted into efficient send/receive kernel paths
-- `writev` suggests helpful batching/vectored output behavior
-
-The low spread between median and tail latencies matches that interpretation.
+This is a **scalability shift**, not a micro-optimization. At high connection counts, readiness-based I/O cuts wasted work and improves both throughput and tail stability.
 
 ---
 
-## 6) Chapter Four: Epoll + Threading (~57.7K req/s)
+## 6) Chapter Four: Epoll + Threading
 
-### Measurement
-
-At 4 threads / 1200 connections:
+### Measurement (4 threads / 1200 conns)
 
 - **57,650.29 req/s**
 - **avg latency 20.50ms**
-- p99 **30.39ms**
+- **p99 30.39ms**
 
-### Why this became the best mode
+### What changed
 
-This combines the two strongest levers:
+This combines both scaling levers:
 
-1. **Readiness-driven I/O (epoll)**
-2. **Parallel execution capacity (threading)**
+1. readiness-based I/O selection (epoll)
+2. parallel execution capacity (threads)
 
-So the server can handle:
-
-- many connected clients
-- many simultaneous ready events
-
-without falling back to O(N) checks or single-lane execution.
-
-### What perf says here
-
-Perf shows substantial weight in thread-pool worker frames plus syscall/TCP transmit paths. In practice that means workers are busy and the kernel/networking path is now the practical frontier.
+So the server handles many open connections and many ready events simultaneously, pushing throughput close to the local ceiling for this design.
 
 ---
 
-## 7) NGINX Comparison: The Last Gap
+## 7) Perf Interpretation (Explain Once, Reuse)
 
-### Measurement (NGINX @ 4 threads / 800 conns)
+Across stages, perf repeatedly emphasized syscall and networking paths (`writev`/write, `tcp_sendmsg`, `tcp_write_xmit`, IP output, softirq/NAPI).
+
+The important progression is:
+
+- early stage: queueing/concurrency limits dominate
+- later stages: those limits are reduced
+- high-throughput stages: kernel networking and syscall cost become primary
+
+`writev` is a useful detail here: vectored writes improve batching and reduce per-response syscall overhead.
+
+(Sections above reference this same shift instead of re-explaining it each time.)
+
+---
+
+## 8) NGINX Comparison (Optimization, Not Magic)
+
+### Measurement (NGINX, 4 threads / 800 conns)
 
 - **60,438.67 req/s**
 - **avg latency 13.09ms**
-- p99 **32.54ms**
+- **p99 32.54ms**
 
-### Why NGINX still leads
+NGINX’s advantage is engineering refinement in the same problem space: lower userspace overhead, tighter event-loop control flow, efficient buffering, and strong batching behavior around the kernel I/O path.
 
-Your notes are accurate: most time is kernel-side, while NGINX user-space cost is relatively small.
-
-This suggests NGINX is doing what mature event-driven servers do best:
-
-- minimal userspace overhead per request
-- efficient buffering and control flow
-- fast handoff to the same Linux networking primitives
-
-So the gap is less about “secret logic,” more about years of runtime-path refinement.
+So the gap is not secret logic; it is optimized steady-state execution.
 
 ---
 
-## 8) The Perf Story Across All Modes
+## 9) Compact Progression Summary
 
-Across all runs, perf repeatedly highlights:
-
-- syscall entry/exit
-- socket read/write paths
-- TCP transmit/receive internals
-- IP output/queueing
-- softirq/NAPI packet processing
-
-Taken together, the progression is clear:
-
-1. Early architecture hit queueing saturation.
-2. Better concurrency (thread pool, epoll) increased useful throughput.
-3. At higher throughput, the dominant cost migrated into kernel networking work.
-
-That is exactly the evolution you want to see in a server that is maturing.
-
----
-
-## 9) Why Epoll Was Non-Negotiable
-
-The practical issue was simple: I needed threads to stop idling on inactive clients.
-
-At high connection counts, checking every socket each cycle is O(N) and wastes CPU. Epoll flips that model: the kernel reports only ready sockets.
-
-So epoll here is not a micro-optimization; it is the mechanism that makes high-connection scaling feasible.
+- **Blocking / backlog-max baseline** → **~5.0K–5.1K req/s** (queueing bottleneck)
+- **Thread pool** → **21,489.98 req/s** (parallelism + less blocked handling)
+- **Epoll** → **43,308.99 req/s** (readiness-driven I/O efficiency)
+- **Epoll + threads** → **57,650.29 req/s** (combined scaling)
+- **NGINX** → **60,438.67 req/s** (optimized steady state)
 
 ---
 
 ## 10) Final Takeaway
 
-If I had to summarize this project in one line:
+The bottleneck path became concrete:
 
-> It started as “build an HTTP server,” and became “learn how bottlenecks move as architecture improves.”
+**queueing saturation → concurrency limits → I/O readiness efficiency → kernel networking cost**.
 
-The strongest lesson is that performance gains came mainly from architecture changes, then from implementation details. The numbers and perf traces now tell one consistent story from first prototype to near-NGINX territory.
+That progression is the main outcome of this project, and the benchmark/perf data supports it end-to-end.
