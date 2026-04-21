@@ -8,9 +8,6 @@
 #include <mutex>
 #include <atomic>
 
-#include "cacheRequest.hpp"
-
-
 namespace HTTP{
     class Cache{
         private:

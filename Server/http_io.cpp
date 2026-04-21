@@ -167,85 +167,65 @@ bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& re
     }
 }
 
+bool HTTP::HttpIO::parse_request(ClientConnection &conn, Request &req) {
+    std::string& buffer = conn.read_buffer;
 
-// bool HTTP::HttpIO::read_request_from_socket(int client_socket, HTTP::Request& req) {
-//     std::string buffer;
-//     char temp[4096];
+    if (buffer.size() > MAX_HEADER_BYTES) return false;
 
-//     size_t header_end = std::string::npos;
-//     size_t content_length = 0;
+    size_t header_end = buffer.find("\r\n\r\n");
+    if (header_end == std::string::npos) return false;
 
-//     while (true) {
-//         const ssize_t bytes = read(client_socket, temp, sizeof(temp));
-//         if (bytes == 0) {
-//             return false;
-//         }
-//         if (bytes < 0) {
-//             perror("read");
-//             return false;
-//         }
+    if (header_end > MAX_HEADER_BYTES) return false;
 
-//         buffer.append(temp, bytes);
+    std::string_view headers(buffer.data(), header_end);
 
-//         if (header_end == std::string::npos) {
-//             header_end = buffer.find("\r\n\r\n");
-//             if (header_end == std::string::npos) {
-//                 continue;
-//             }
+    size_t content_length = 0;
 
-//             const std::string headers = buffer.substr(0, header_end);
-//             const size_t cl_pos = headers.find("Content-Length:");
-//             if (cl_pos != std::string::npos) {
-//                 size_t start = cl_pos + 15;
-//                 while (start < headers.size() && headers[start] == ' ') {
-//                     start++;
-//                 }
-//                 const size_t end = headers.find("\r\n", start);
-//                 content_length = std::stoul(headers.substr(start, end - start));
-//                 //if (content_length > )
-//             }
-//         }
+    size_t cl_pos = headers.find("Content-Length:");
+    if (cl_pos != std::string::npos) {
+        size_t start = cl_pos + 15;
+        while (start < headers.size() && headers[start] == ' ') ++start;
 
-//         const size_t total_needed = header_end + 4 + content_length;
-//         if (buffer.size() < total_needed) {
-//             continue;
-//         }
+        size_t end = headers.find("\r\n", start);
+        if (end == std::string::npos) end = headers.size();
 
-//         const std::string raw_request = buffer.substr(0, total_needed);
-//         const size_t line_end = raw_request.find("\r\n");
-//         const std::string request_line = raw_request.substr(0, line_end);
+        std::string_view clv = headers.substr(start, end - start);
+        if (!parse_size_t_decimal(clv, content_length)) return false;
+        if (content_length > MAX_BODY_BYTES) return false;
+    }
 
-//         const size_t first_space = request_line.find(' ');
-//         const size_t second_space = request_line.find(' ', first_space + 1);
+    size_t total_needed = header_end + 4 + content_length;
 
-//         req.route.method = request_line.substr(0, first_space);
-//         req.route.path = request_line.substr(first_space + 1, second_space - first_space - 1);
-//         req.version = request_line.substr(second_space + 1);
-//         req.body = raw_request.substr(header_end + 4, content_length);
+    if (buffer.size() < total_needed) return false;
 
-//         std::cout << "Method: " << req.route.method << "\n";
-//         std::cout << "Path: " << req.route.path << "\n";
-//         std::cout << "Body size: " << req.body.size() << "\n";
+    size_t line_end = buffer.find("\r\n");
+    if (line_end == std::string::npos || line_end == 0) return false;
 
-//         return true;
-//     }
-// }
+    std::string_view request_line(buffer.data(), line_end);
+
+    size_t first_space = request_line.find(' ');
+    size_t second_space = request_line.find(' ', first_space + 1);
+
+    if (first_space == std::string::npos || second_space == std::string::npos) return false;
+
+    req.route.method = std::string(request_line.substr(0, first_space));
+    req.route.path   = std::string(request_line.substr(first_space + 1, second_space - first_space - 1));
+    req.version      = std::string(request_line.substr(second_space + 1));
+
+    req.body.assign(buffer.data() + header_end + 4, content_length);
+
+    buffer.erase(0, total_needed);
+
+    return true;
+}
+
 
 void HTTP::HttpIO::send_response(int client_socket, const HTTP::Response& res) {
     std::string headers;
     headers.reserve(256);
 
     headers += "HTTP/1.1 " + std::to_string(res.status) + " " + status_text_from_code(res.status) + "\r\n";
-
-    // std::string response;
-    // response.reserve(res.body.size() + 256);
-
-    // response += "HTTP/1.1 ";
-    // response += std::to_string(res.status);
-    // response += " ";
-    // response += status_text_from_code(res.status);
-    // response += "\r\n";
-
+    
     bool has_length = false;
     bool has_type = false;
     bool has_conn = false;

@@ -13,6 +13,7 @@
 
 #include "../Cache/cache.hpp"
 #include "../network.hpp"
+#include "client_conn.hpp"
 
 namespace HTTP {
 class Server {
@@ -28,11 +29,15 @@ class Server {
     std::vector<Route> routes;
     HTTP::Cache cache;
 
+    std::unordered_map<int, ClientConnection> conn_map;
+
   public:
     Server(int domain, int service, int protocol, int port, u_long interface, int bklg);
 
     ListenSocket* get_socket();
     void handle_client_connection(int client_socket);
+
+    void processRequest(Request& req);
 
     //void set_handler(std::function<std::string(Request)> operation);
 

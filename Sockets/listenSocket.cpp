@@ -6,7 +6,7 @@ HTTP::ListenSocket::ListenSocket(int domain, int service, int protocol, int port
     test_connection(listening);
 }
 
-void HTTP::ListenSocket::start_listening() { listening = listen(get_sock(), backlog); }
+void HTTP::ListenSocket::start_listening() { listening = listen(get_sock(), SOMAXCONN); }
 
 int HTTP::ListenSocket::get_listening() const { return listening; }
 

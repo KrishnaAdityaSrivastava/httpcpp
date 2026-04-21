@@ -13,13 +13,14 @@
 
 #include "request.hpp"
 #include "response.hpp"
+#include "client_conn.hpp"
 
-namespace HTTP{
-    class HttpIO {
-        public:
-            //std::string buffer;
-            bool read_request_from_socket(int client_socket, Request& req);
-            void send_response(int client_socket, const Response& res);
-            void send_file_response(int client_socket, const std::string& path);
-    };
+namespace HTTP::HttpIO {
+        
+    //std::string buffer;
+    bool read_request_from_socket(int client_socket, Request& req);
+    void send_response(int client_socket, const Response& res);
+    void send_file_response(int client_socket, const std::string& path);
+
+    bool parse_request(ClientConnection  &conn, Request &req);
 } // namespace HTTP::HttpIO

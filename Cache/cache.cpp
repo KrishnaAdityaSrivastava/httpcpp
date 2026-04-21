@@ -18,7 +18,7 @@ HTTP::Cache::Cache(){
 int HTTP::Cache::get(std::string key){
     std::lock_guard<std::mutex> lock(map_mtx);
     auto it = cache.find(key);
-    if (it == cache.end()) return 0;
+    if (it == cache.end()) return  0;
     return it->second.load(std::memory_order_relaxed);
 }
 
