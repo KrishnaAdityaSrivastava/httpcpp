@@ -1,14 +1,18 @@
 #pragma once
+
 #include <string>
-#include <functional>
-#include "response.hpp"
 
 namespace HTTP {
-struct Request;
+
+class Handler;
+
 struct Route {
     std::string method;
     std::string path;
-    std::function<HTTP::Response(const Request&)> handler;
+    Handler* handler;
+
+    Route(std::string method, std::string path, Handler* handler)
+        : method(std::move(method)), path(std::move(path)), handler(handler) {}
 };
 
-}
+} // namespace HTTP

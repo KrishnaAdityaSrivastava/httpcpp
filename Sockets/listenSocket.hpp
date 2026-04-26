@@ -1,20 +1,27 @@
 #ifndef ListenSocket_h
 #define ListenSocket_h
 
-#include "bindSocket.hpp"
+#include <netinet/in.h>
 
 namespace HTTP {
-class ListenSocket : public BindSocket {
+class ListenSocket {
   private:
+    struct sockaddr_in address{};
+    int sock{-1};
     int backlog;
-    int listening;
 
   public:
+
     ListenSocket(int domain, int service, int protocol, int port, u_long interface, int bklg);
-    void start_listening();
-    int get_listening() const;
+
+    ~ListenSocket();
+
+    struct sockaddr_in get_address() const;
+
+    int get_sock() const;
+
     int get_backlog() const;
 };
-} // namespace HTTP
+}
 
 #endif
